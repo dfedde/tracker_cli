@@ -1,124 +1,19 @@
 #!/usr/bin/env ruby
+
+lib = File.expand_path(File.dirname(__FILE__) + '/../lib')
+$LOAD_PATH.unshift(lib) if File.directory?(lib) && !$LOAD_PATH.include?(lib)
+
 require 'curses'
-require 'pivotal-tracker'
+require 'tracker_cli'
 
-$stderr.reopen(File.dirname(__FILE__) + "/../traker_error.txt", "w")
-
-class Pensil
-
-  def draw
-    window.addstr("I'm a cat ")
-    window.refresh
-    sleep 3
-  end
-
-  protected
-
-  attr_reader :window
-end
-
-class StoryList < Pensil
-
-  def cols
-    window.maxx
-  end
-
-  def lines
-    window.maxy
-  end
-
-  def initialize(window, project:)
-    @project = project
-    @window = window
-  end
-
-  def draw(stories, title)
-    $stderr.puts("drawing")
-    window.clear
-
-    line_count = 1
-    window.setpos(line_count, (cols - title.length) / 2)
-    line_count += 1
-    window.addstr(title)
-    window.setpos(line_count, 0)
-    line_count += 1
-    $stderr.puts("title:#{title} cols:#{cols}")
-    window.addstr("#{?-*cols}")
-
-    stories.each do |story|
-      window.setpos(line_count += 1, 1)
-      $stderr.puts("drawing story(#{story.id})")
-      window.addstr("#{story.name.slice(0, cols - 17)}")
-      window.setpos(line_count, cols - (story.current_state.length + 3))
-      window.addstr("#{story.current_state}")
-    end
-    window.box(?|, ?-)
-
-    window.refresh
-  end
-
-  protected
-
-  attr_reader :project
-
-end
-
-class CurrentList < StoryList
-
-  def draw
-   super get_stories, 'Current'
-  end
-
-  def get_stories
-    $stderr.puts("get stories")
-    project.iteration(:current).stories
-    PivotalTracker::Iteration.current(project).stories
-  end
-end
-
-class BacklogList < StoryList
-
-  def draw
-   super get_stories, 'BackLog'
-  end
-
-  def get_stories
-    $stderr.puts("get stories")
-    strs = PivotalTracker::Iteration.backlog(project).map{|i| i.stories}.flatten
-  end
-end
-
-class IceboxList < StoryList
-
-  def draw
-   super get_stories, "Icebox"
-  end
-
-  def get_stories
-    $stderr.puts("get stories")
-    @stories = project.stories.all.select{|story| %w(unscheduled).include? story.current_state}
-  end
-end
-
-# PivotalTracker::Client.token = '54a0713b7ab09980634572a75262add9'
-# project = PivotalTracker::Project.find(1405348)
-# stories = project.stories.all
-# stories.each do |story|
-#   puts("#{story.name}\n")
-# end
-
+$stderr.reopen(File.open('traker_error.txt', 'w'))
 
 Curses.init_screen
 
-# begin
+begin
   Curses.crmode
-  header = Curses::Window.new(3, Curses.cols, 0, 0)
-
-  top_message = "My Tracker"
-  header.setpos(2, (Curses.cols - top_message.length) / 2)
-  header.addstr top_message
-  header.box(?|, ?-)
-  header.refresh
+  # make the cursor invisable
+  Curses.curs_set(0)
 
   Curses.setpos((Curses.lines - 1) / 2, (Curses.cols - 11) / 2)
   Curses.addstr "waiting..."
@@ -127,26 +22,18 @@ Curses.init_screen
 
 
   # these are expencive put them in a thread
-  PivotalTracker::Client.token = '54a0713b7ab09980634572a75262add9'
-  project = PivotalTracker::Project.find(1405348)
+  PivotalTracker::Client.token = '1900796d209324d6abe9d59ae0ac710f'
+  project = PivotalTracker::Project.find(1506772)
 
-  panes = [CurrentList, BacklogList, IceboxList].map.with_index do |klass, i|
-    width = (Curses.cols / 3)
-    $stderr.puts(klass.to_s,Curses.lines-2, width, 1, i * width+2, "\n\n\n\n")
-
-    win = Curses::Window.new(Curses.lines-2, width, 1, i * width)
-    klass.new(win, project: project)
-  end
+  pv = ProjectView.new(Curses::Window.new(0,0,0,0))
 
   loop do
     sleep 3
-    $stderr.puts("in loop")
-    panes.each(&:draw)
-    Curses.refresh
+    pv.draw project
   end
-# rescue Exception => e
-#     $stderr.puts e.inspect
-#     $stderr.puts e.backtrace
-# ensure
+rescue Exception => e
+    $stderr.puts e.inspect
+    $stderr.puts e.backtrace
+ensure
   Curses.close_screen
-# end
+end
