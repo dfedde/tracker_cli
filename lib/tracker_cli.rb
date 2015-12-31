@@ -5,6 +5,10 @@ require 'pivotal-tracker'
 
 class Pensil
 
+  def initialize(window)
+    @window = window
+  end
+
   def cols
     window.maxx
   end
@@ -23,10 +27,19 @@ class Pensil
   attr_reader :window
 end
 
-class ProjectView < Pensil
-  def initialize(window)
-    @window = window
+class SplashScreen < Pensil
+
+  def draw
+    File.foreach("#{File.expand_path(File.dirname(__FILE__))}/tracker_logo").with_index do |line, i|
+      window.setpos(i, 0)
+      window.addstr line
+    end
+    window.refresh
   end
+
+end
+
+class ProjectView < Pensil
 
   def draw(project)
     top_message = project.name
