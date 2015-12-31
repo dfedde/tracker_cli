@@ -87,16 +87,13 @@ class StoryList < Pensil
     $stderr.puts("drawing")
     window.clear
 
-    hor_char = (highlighted? && ?+) || ?-
-    vert_char = (highlighted? && ?+) || ?|
+    # hor_char = (highlighted? && ?+) || ?-
+    # vert_char = (highlighted? && ?+) || ?|
     line_count = 1
     window.setpos(line_count, (cols - title.length) / 2)
     line_count += 1
     window.addstr(title)
-    window.setpos(line_count, 0)
-    line_count += 1
-    $stderr.puts("title:#{title} cols:#{cols}")
-    window.addstr("#{?-*cols}")
+    barline = line_count
 
     stories.each do |story|
       window.setpos(line_count += 1, 1)
@@ -105,7 +102,24 @@ class StoryList < Pensil
       window.setpos(line_count, cols - (story.current_state.length + 3))
       window.addstr("#{story.current_state}")
     end
-    window.box(vert_char, hor_char)
+
+
+    window.setpos(0, 0)
+    window.addstr("┌#{?─*(cols-2)}┐")
+    (lines - 2).times.with_index do |i|
+      line = i + 1
+      right = left = ?│
+      window.setpos(line, 0)
+      if barline == line
+        window.addstr("├#{?─*(cols-2)}┤")
+      else
+        window.addstr right
+        window.setpos(line, cols - 1)
+        window.addstr left
+      end
+    end
+    window.setpos(lines, 0)
+    window.addstr("└#{?─*(cols-2)}┘")
 
     window.refresh
   end
