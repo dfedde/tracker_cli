@@ -15,11 +15,12 @@ begin
   # make the cursor invisable
   Curses.curs_set(0)
 
-  Curses.setpos((Curses.lines - 1) / 2, (Curses.cols - 11) / 2)
-  Curses.addstr "waiting..."
-  Curses.refresh
-
-
+  loading_window =Curses::Window.new(11,90,(Curses.lines - 11)/2,(Curses.cols-90)/2)
+  File.foreach("#{lib}/tracker_logo").with_index do |line, i|
+    loading_window.setpos(i, 0)
+    loading_window.addstr line
+  end
+  loading_window.refresh
 
   # these are expencive put them in a thread
   PivotalTracker::Client.token = '1900796d209324d6abe9d59ae0ac710f'
