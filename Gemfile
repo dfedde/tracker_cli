@@ -1,7 +1,8 @@
 # A sample Gemfile
 source "https://rubygems.org"
 
-gem 'pivotaltracker'
+gem 'pivotal-tracker'
+gem 'curses'
 
 group :test do
   gem 'rspec'
