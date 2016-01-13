@@ -6,28 +6,60 @@ $LOAD_PATH.unshift(lib) if File.directory?(lib) && !$LOAD_PATH.include?(lib)
 require 'curses'
 require 'tracker_cli'
 
+def onsig(sig)
+  Curses.close_screen
+  exit sig
+end
+
+for i in %w[HUP INT QUIT TERM]
+  if trap(i, "SIG_IGN") != 0 then  # 0 for SIG_IGN
+    trap(i) {|sig| onsig(sig) }
+  end
+end
+
 $stderr.reopen(File.open('traker_error.txt', 'w'))
 
 Curses.init_screen
 
 begin
+  State.reducer do |state, action|
+    state = state || {}
+    case action[:type]
+    when :start
+      state[:running] = true
+    when :set_project
+      state[:project] = action[:project]
+    end
+    state
+  end
+
+  State.send_action type: :start
+
   Curses.crmode
   # make the cursor invisable
   Curses.curs_set(0)
 
-  loading_window =Curses::Window.new(11,90,(Curses.lines - 11)/2,(Curses.cols-90)/2)
-  SplashScreen.new(loading_window).draw
+  screen = Screen.new(Curses::Window.method(:new))
+
+  screen.add(SplashScreen,
+             height: 11,
+             width:  90,
+             top:  (Curses.lines - 11)/2,
+             left: (Curses.cols - 90)/2,
+            )
 
   # these are expencive put them in a thread
   PivotalTracker::Client.token = '1900796d209324d6abe9d59ae0ac710f'
   project = PivotalTracker::Project.find(1506772)
 
-  pv = ProjectView.new(Curses::Window.new(0,0,0,0))
+  State.send_action type: :set_project, project: project
 
-  loop do
-    sleep 3
-    pv.draw project
+  screen.add(ProjectView)
+
+  while State.state[:running]
+    sleep 1
   end
+
 rescue Exception => e
     $stderr.puts e.inspect
     $stderr.puts e.backtrace
