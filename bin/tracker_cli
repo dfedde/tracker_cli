@@ -9,106 +9,119 @@ require "net/http"
 require "uri"
 
 def onsig(sig)
-  Curses.close_screen
-  exit sig
+	Curses.close_screen
+	exit sig
 end
 
 %w[HUP INT QUIT TERM].each do |i|
-  if trap(i, "SIG_IGN") != 0 then  # 0 for SIG_IGN
-    trap(i) {|sig| onsig(sig) }
-  end
+	if trap(i, "SIG_IGN") != 0 then  # 0 for SIG_IGN
+		trap(i) {|sig| onsig(sig) }
+	end
 end
 
-$stderr.reopen(File.open('traker_error.txt', 'w'))
+$stderr.reopen(File.open('log/tracker', 'a+'))
+
+State.reducer do |state, action|
+	state = state || {}
+	case action[:type]
+	when :start
+		state[:running] = true
+	when :set_project
+		state[:project] = action[:project]
+	end
+	state
+end
 
 Curses.init_screen
+Curses.cbreak
+Curses.noecho
+#Curses.start_color
+# $stderr.puts Curses::A_NORMAL
+# Curses.init_pair(Curses::COLOR_BLUE,Curses::COLOR_BLUE,Curses::COLOR_BLACK)
+# Curses.init_pair(Curses::COLOR_RED,Curses::COLOR_RED,Curses::COLOR_BLACK)
+# 	Curses.attron(Curses.color_pair(Curses::COLOR_RED)){
+# 		Curses.addstr("Page Up")
+# 	}
+#
+# 	Curses.attron(Curses.color_pair(Curses::COLOR_BLUE)){
+# 		Curses.addstr("Page down")
+# 	}
+#
+# 	Curses.refresh
+# 	sleep 100
+# exit
 
 begin
-  State.reducer do |state, action|
-    state = state || {}
-    case action[:type]
-    when :start
-      state[:running] = true
-    when :set_project
-      state[:project] = action[:project]
-    end
-    state
-  end
+	State.send_action type: :start
 
-  State.send_action type: :start
+	Curses.crmode
+	# make the cursor invisable
+	Curses.curs_set(0)
 
-  Curses.crmode
-  # make the cursor invisable
-  Curses.curs_set(0)
+	screen = Screen.new(Curses::Window.new(0,0,0,0))
 
-  screen = Screen.new(Curses::Window.new(0,0,0,0))
-
-  screen.render do
-    add_component(SplashScreen,
-                  height: 11,
-                  width:  90,
-                  top:  (Curses.lines - 11)/2,
-                  left: (Curses.cols - 90)/2,
-                 )
-    sleep 2
-  end
+	screen.render do
+		add_component(SplashScreen,
+									height: 11,
+									width:  90,
+									top:  (Curses.lines - 11)/2,
+									left: (Curses.cols - 90)/2,
+								 )
+		sleep 2
+	end
 
 
-  m = (Curses.lines - 11)/2
-  until m == 1
-    screen.render do
-      add_component(SplashScreen,
-                    height: 11,
-                    width:  90,
-                    top:  m -= 1,
-                    left: (Curses.cols - 90)/2,
-                   )
-      sleep 0.05
-    end
-  end
+	m = (Curses.lines - 11)/2
+	until m == 1
+		screen.render do
+			add_component(SplashScreen,
+										height: 11,
+										width:  90,
+										top:  m -= 1,
+										left: (Curses.cols - 90)/2,
+									 )
+			sleep 0.05
+		end
+	end
 
-  screen.render do
-    add_component(SplashScreen,
-                  height: 11,
-                  width:  90,
-                  top:  0,
-                  left: (Curses.cols - 90)/2,
-                 )
-    sleep 0.2
-    add_component(LoginScreen,
-                  height: 4,
-                  width:  90,
-                  top:  12,
-                  left: (Curses.cols - 90)/2,
-                 )
-    sleep 3
-  end
+	screen.render do
+		add_component(LoginScreen)
+		sleep 100
+	end
+  exit
 
-  uri = URI('https://www.pivotaltracker.com/services/v5/me')
+	uri = URI('https://www.pivotaltracker.com/services/v5/me')
 
-  Net::HTTP.start(uri.host, uri.port,
-                  :use_ssl => uri.scheme == 'https') do |http|
-    request = Net::HTTP::Get.new uri
-    response = http.request request # Net::HTTPResponse object
-    token = JSON.parse(response.body)['api_token']
-    PivotalTracker::Client.token = token
-  end
+	Net::HTTP.start(uri.host, uri.port,
+									:use_ssl => uri.scheme == 'https') do |http|
+		request = Net::HTTP::Get.new uri
 
-  project = PivotalTracker::Project.find(1506772)
+		File.open('secrets') do |secrets|
+			uname = secrets.gets.chomp
+			password = secrets.gets.chomp
+			request.basic_auth uname, password
+		end
 
-  State.send_action type: :set_project, project: project
+		response = http.request request # Net::HTTPResponse object
+		token = JSON.parse(response.body)['api_token']
+		PivotalTracker::Client.token = token
+	end
 
-  screen.render do
-     add_component(ProjectView)
-  end
+	project = PivotalTracker::Project.find(1506772)
 
-  while State.state[:running]
-    sleep 1
-  end
+	State.send_action type: :set_project, project: project
+
+	screen.render do
+		add_component(ProjectView)
+		while State.state[:running]
+			sleep 1
+		end
+	end
+
 
 rescue Exception => e
-  $stderr.puts e.inspect
-  $stderr.puts e.backtrace
+	$stderr.puts e.inspect
+	$stderr.puts e.backtrace
 ensure
-  Curses.close_screen
+	Curses.close_screen
 end

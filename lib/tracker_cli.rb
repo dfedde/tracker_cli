@@ -16,7 +16,6 @@ class State
     # stack so that you could regress a action
     def reduce state, action
       @state = @reducer[state, action]
-      puts "Im here >>#{state.inspect}<< action >>#{action}<<"
     end
 
     def send_action action
@@ -37,18 +36,74 @@ end
 # Screen.new { |*args| Curses::Window.new *args )
 # ```
 class Screen
-  attr_accessor :window_maker
+  attr_accessor :window, :windows
 
-  def initialize(window_maker = false, &block)
-    raise ArgumentError.new('provide only a proc or a block') if window_maker && block
-    @window_maker = window_maker || block
+  def render &block
+    listen = true
+    Thread.new do
+      while listen
+        window.getch
+      end
+    end
+
+    instance_eval(&block)
+    clean_windows_for self
+    listen = false
   end
 
-  def add(klass, width: 0, height: 0, top: 0, left: 0, **opts)
-    $stderr.puts "#{klass}  #{[height, width, top, left]}"
-    win = window_maker[height, width, top, left]
-    klass.new(win, opts).draw()
+  def clean_windows_for renderer
+    windows[renderer].map do |win|
+      $stderr.puts "cleaning up #{win[:instance].class}"
+      win[:win].clear
+      win[:win].refresh
+      win[:win].close
+    end
+    window.refresh
+    windows[renderer] = []
+  end
+
+  def initialize(window)
+    @window = window
+    @windows = {}
+  end
+
+  def add_component(klass, renderer = self, **opts)
+    height, width, top, left = [
+      opts[:height] || renderer.lines,
+      opts[:width]  || renderer.cols,
+      opts[:top]    || renderer.top,
+      opts[:left]   || renderer.left
+    ]
+
+    @windows[renderer] ||= []
+    $stderr.puts "building #{klass} at  #{[height, width, top, left]}"
+    win  = window.subwin(height, width, top, left)
+    inst = klass.new(win, self, opts)
+
+    @windows[renderer] << {
+      win:      win,
+      instance: inst
+    }
+
+    $stderr.puts "rendering #{klass} at  #{[height, width, top, left]}"
+    inst.draw
     win.refresh
+  end
+
+  def lines
+    window.maxy
+  end
+
+  def cols
+    window.maxx
+  end
+
+  def top
+    window.begy
+  end
+
+  def left
+    window.begx
   end
 end
 
@@ -58,12 +113,20 @@ end
 # todo: a pencil shold define a event listner that is used when it is infocus
 class Pensil
 
-  def add_component klass, **opts
-    screen.add klass, **opts
+  attr_reader :state
+
+  def state= state_changes
+    new_state = state.merge state_changes
+    new_state == state || draw
+    @state == new_state
   end
 
-  def initialize(window, opts)
-    @screen = Screen.new window.method(:subwin)
+  def add_component klass, **opts
+    screen.add_component klass, self, **opts
+  end
+
+  def initialize(window, screen, opts)
+    @screen = screen
     @window = window
     @opts = opts
   end
@@ -76,9 +139,16 @@ class Pensil
     window.maxy
   end
 
+  def top
+    window.begy
+  end
+
+  def left
+    window.begx
+  end
+
   def draw
-    window.addstr("I'm a cat ")
-    window.refresh
+    raise 'do not render Pensil directly'
   end
 
   protected
@@ -90,7 +160,90 @@ class Pensil
   attr_reader :screen
 end
 
+
+class LoginScreen < Pensil
+
+  def draw
+    add_component(Logo,
+                  width: 90,
+                  top: 0,
+                  left: (cols - 90)/2
+                 )
+
+    add_component(TextField,
+                  height: 3,
+                  width: 60,
+                  top: (lines)/2,
+                  left: (cols - 60)/2,
+                  prompt: 'username',
+                  value:  'some string'
+                 )
+
+    add_component(PasswordField,
+                  height: 3,
+                  width: 60,
+                  top: (lines + 4)/2,
+                  left: (cols - 60)/2,
+                  prompt: 'password',
+                  value: 'password',
+                  connected: true
+                 )
+  end
+end
+
+class PasswordField < Pensil
+
+  def draw
+    add_component(TextField,
+                  **opts,
+                  value: ?**opts[:value].length,
+                 )
+  end
+
+end
+
+class TextField < Pensil
+
+  def draw
+    window.setpos(1, 1)
+    window.addstr "#{opts[:prompt]}: "
+    window.addstr opts[:value]
+
+    window.setpos(0, 0)
+    if opts[:connected]
+      $stderr.puts 'here'
+      window.addstr("├#{?─*(cols-2)}┤")
+    else
+      window.addstr("┌#{?─*(cols-2)}┐")
+    end
+    (lines - 2).times.with_index do |i|
+      line = i + 1
+      right = left = ?│
+      window.setpos(line, 0)
+      window.addstr right
+      window.setpos(line, cols - 1)
+      window.addstr left
+    end
+    window.setpos(lines, 0)
+    window.addstr("└#{?─*(cols-2)}┘")
+  end
+
+end
+
 class SplashScreen < Pensil
+
+  def draw
+    add_component(Logo,
+                  height: opts[:height],
+                  width: opts[:width],
+                  top: opts[:top],
+                  left: opts[:left]
+                 )
+  end
+
+end
+
+class Logo < Pensil
 
   def draw
     File.foreach("#{File.expand_path(File.dirname(__FILE__))}/tracker_logo").with_index do |line, i|
@@ -187,7 +340,7 @@ end
 class CurrentList < Pensil
 
   def draw
-    add_component(StoryList, stories: get_stories, label:  'Current')
+    add_component(StoryList, stories: get_stories, title:  'Current')
   end
 
   def get_stories
@@ -205,7 +358,7 @@ class BacklogList < Pensil
 
 
   def draw
-    add_component(StoryList, stories: get_stories, label:  'Backlog')
+    add_component(StoryList, stories: get_stories, title:  'Backlog')
   end
 
   def get_stories
@@ -221,7 +374,7 @@ end
 class IceboxList < Pensil
 
   def draw
-    add_component(StoryList, stories: get_stories, label:  'Icebox')
+    add_component(StoryList, stories: get_stories, title:  'Icebox')
   end
 
   def get_stories
