@@ -5,13 +5,15 @@ $LOAD_PATH.unshift(lib) if File.directory?(lib) && !$LOAD_PATH.include?(lib)
 
 require 'curses'
 require 'tracker_cli'
+require "net/http"
+require "uri"
 
 def onsig(sig)
   Curses.close_screen
   exit sig
 end
 
-for i in %w[HUP INT QUIT TERM]
+%w[HUP INT QUIT TERM].each do |i|
   if trap(i, "SIG_IGN") != 0 then  # 0 for SIG_IGN
     trap(i) {|sig| onsig(sig) }
   end
@@ -39,30 +41,74 @@ begin
   # make the cursor invisable
   Curses.curs_set(0)
 
-  screen = Screen.new(Curses::Window.method(:new))
+  screen = Screen.new(Curses::Window.new(0,0,0,0))
 
-  screen.add(SplashScreen,
-             height: 11,
-             width:  90,
-             top:  (Curses.lines - 11)/2,
-             left: (Curses.cols - 90)/2,
-            )
+  screen.render do
+    add_component(SplashScreen,
+                  height: 11,
+                  width:  90,
+                  top:  (Curses.lines - 11)/2,
+                  left: (Curses.cols - 90)/2,
+                 )
+    sleep 2
+  end
 
-  # these are expencive put them in a thread
-  PivotalTracker::Client.token = '1900796d209324d6abe9d59ae0ac710f'
+
+  m = (Curses.lines - 11)/2
+  until m == 1
+    screen.render do
+      add_component(SplashScreen,
+                    height: 11,
+                    width:  90,
+                    top:  m -= 1,
+                    left: (Curses.cols - 90)/2,
+                   )
+      sleep 0.05
+    end
+  end
+
+  screen.render do
+    add_component(SplashScreen,
+                  height: 11,
+                  width:  90,
+                  top:  0,
+                  left: (Curses.cols - 90)/2,
+                 )
+    sleep 0.2
+    add_component(LoginScreen,
+                  height: 4,
+                  width:  90,
+                  top:  12,
+                  left: (Curses.cols - 90)/2,
+                 )
+    sleep 3
+  end
+
+  uri = URI('https://www.pivotaltracker.com/services/v5/me')
+
+  Net::HTTP.start(uri.host, uri.port,
+                  :use_ssl => uri.scheme == 'https') do |http|
+    request = Net::HTTP::Get.new uri
+    response = http.request request # Net::HTTPResponse object
+    token = JSON.parse(response.body)['api_token']
+    PivotalTracker::Client.token = token
+  end
+
   project = PivotalTracker::Project.find(1506772)
 
   State.send_action type: :set_project, project: project
 
-  screen.add(ProjectView)
+  screen.render do
+     add_component(ProjectView)
+  end
 
   while State.state[:running]
     sleep 1
   end
 
 rescue Exception => e
-    $stderr.puts e.inspect
-    $stderr.puts e.backtrace
+  $stderr.puts e.inspect
+  $stderr.puts e.backtrace
 ensure
   Curses.close_screen
 end
