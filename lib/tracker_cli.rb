@@ -79,6 +79,7 @@ class Screen
     $stderr.puts "building #{klass} at  #{[height, width, top, left]}"
     win  = window.subwin(height, width, top, left)
     inst = klass.new(win, self, opts)
+    inst.on_mount
 
     @windows[renderer] << {
       win:      win,
@@ -115,10 +116,16 @@ class Pensil
 
   attr_reader :state
 
+  ##
+  # when the state of a component changes
+  # the component redraws
   def state= state_changes
     new_state = state.merge state_changes
     new_state == state || draw
     @state == new_state
+  end
+
+  def on_mount
   end
 
   def add_component klass, **opts
