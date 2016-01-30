@@ -1,6 +1,5 @@
 require 'rubygems'
 require 'bundler/setup'
-
 require 'pivotal-tracker'
 
 #this reducer state object is global so maybey its not
@@ -36,13 +35,14 @@ end
 # Screen.new { |*args| Curses::Window.new *args )
 # ```
 class Screen
-  attr_accessor :window, :windows
+  attr_accessor :window, :windows, :focused
 
   def render &block
     listen = true
     Thread.new do
       while listen
-        window.getch
+        ch = window.getch
+        focused.on_getch(ch)
       end
     end
 
@@ -65,6 +65,7 @@ class Screen
   def initialize(window)
     @window = window
     @windows = {}
+    @focused = self
   end
 
   def add_component(klass, renderer = self, **opts)
@@ -83,7 +84,7 @@ class Screen
 
     @windows[renderer] << {
       win:      win,
-      instance: inst
+      instance: inst,
     }
 
     $stderr.puts "rendering #{klass} at  #{[height, width, top, left]}"
@@ -106,6 +107,10 @@ class Screen
   def left
     window.begx
   end
+
+  def on_getch
+    puts 'im here now'
+  end
 end
 
 ###
@@ -116,16 +121,23 @@ class Pensil
 
   attr_reader :state
 
+  def on_getch
+  end
+
   ##
   # when the state of a component changes
   # the component redraws
   def state= state_changes
     new_state = state.merge state_changes
-    new_state == state || draw
-    @state == new_state
+    draw #unless new_state == state
+    @state = new_state
   end
 
   def on_mount
+  end
+
+  def get_focus
+    screen.focused = self
   end
 
   def add_component klass, **opts
@@ -136,6 +148,11 @@ class Pensil
     @screen = screen
     @window = window
     @opts = opts
+    @state = get_inital_state
+  end
+
+  def get_inital_state
+    {}
   end
 
   def cols
@@ -154,6 +171,7 @@ class Pensil
     window.begx
   end
 
+  # maybe draw is given the window
   def draw
     raise 'do not render Pensil directly'
   end
@@ -169,6 +187,17 @@ end
 
 
 class LoginScreen < Pensil
+  def on_mount
+    get_focus
+  end
+
+  def on_getch(char)
+    self.state = {user_name: state[:user_name] += char}
+  end
+
+  def get_inital_state
+    {user_name: 'g'}
+  end
 
   def draw
     add_component(Logo,
@@ -183,7 +212,7 @@ class LoginScreen < Pensil
                   top: (lines)/2,
                   left: (cols - 60)/2,
                   prompt: 'username',
-                  value:  'some string'
+                  value:  state[:user_name]
                  )
 
     add_component(PasswordField,
@@ -218,7 +247,6 @@ class TextField < Pensil
 
     window.setpos(0, 0)
     if opts[:connected]
-      $stderr.puts 'here'
       window.addstr("├#{?─*(cols-2)}┤")
     else
       window.addstr("┌#{?─*(cols-2)}┐")
@@ -303,7 +331,6 @@ class StoryList < Pensil
   def draw
     stories = opts[:stories]
     title = opts[:title]
-    $stderr.puts("drawing")
     window.clear
 
     # hor_char = (highlighted? && ?+) || ?-
