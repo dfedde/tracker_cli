@@ -109,7 +109,6 @@ class Screen
   end
 
   def on_getch
-    puts 'im here now'
   end
 end
 
@@ -129,8 +128,8 @@ class Pensil
   # the component redraws
   def state= state_changes
     new_state = state.merge state_changes
-    draw #unless new_state == state
     @state = new_state
+    redraw #unless new_state == state
   end
 
   def on_mount
@@ -182,6 +181,12 @@ class Pensil
 
   private
 
+  def redraw
+    window.clear
+    draw
+    window.refresh
+  end
+
   attr_reader :screen
 end
 
@@ -192,11 +197,33 @@ class LoginScreen < Pensil
   end
 
   def on_getch(char)
-    self.state = {user_name: state[:user_name] += char}
+    send(state[:input_func], char)
+  end
+
+  def login_input(char)
+    case char
+    when 127
+      self.state = {user_name: state[:user_name][0..-2]}
+    when 10
+      self.state = {input_func: :password_input}
+    else
+      self.state = {user_name: state[:user_name] += char}
+    end
+  end
+
+  def password_input(char)
+    case char
+    when 127
+      self.state = {password: state[:password][0..-2]}
+    when 10
+      self.state = {input_func: :password_func}
+    else
+      self.state = {password: state[:password] += char}
+    end
   end
 
   def get_inital_state
-    {user_name: 'g'}
+    {user_name: '', password: '', input_func: :login_input}
   end
 
   def draw
@@ -211,7 +238,7 @@ class LoginScreen < Pensil
                   width: 60,
                   top: (lines)/2,
                   left: (cols - 60)/2,
-                  prompt: 'username',
+                  prompt: 'username:',
                   value:  state[:user_name]
                  )
 
@@ -220,8 +247,8 @@ class LoginScreen < Pensil
                   width: 60,
                   top: (lines + 4)/2,
                   left: (cols - 60)/2,
-                  prompt: 'password',
-                  value: 'password',
+                  prompt: 'password:',
+                  value: state[:password],
                   connected: true
                  )
   end
@@ -242,7 +269,7 @@ class TextField < Pensil
 
   def draw
     window.setpos(1, 1)
-    window.addstr "#{opts[:prompt]}: "
+    window.addstr "#{opts[:prompt]} "
     window.addstr opts[:value]
 
     window.setpos(0, 0)
