@@ -26,8 +26,14 @@ State.reducer do |state, action|
 	case action[:type]
 	when :start
 		state[:running] = true
+  when :set_page
+		state[:page] = action[:page]
+  when :set_token
+		state[:token] = action[:token]
 	when :set_project
 		state[:project] = action[:project]
+  else
+    fail "#{action[:type]} is not a action"
 	end
 	state
 end
@@ -53,15 +59,15 @@ Curses.noecho
 
 begin
 	State.send_action type: :start
+	State.send_action type: :set_page, page: :login
+
+	State.send_action type: :set_project, project: '1506772'
 
 	Curses.crmode
 	# make the cursor invisable
 	Curses.curs_set(0)
 
 	screen = Screen.new(Curses::Window.new(0,0,0,0))
-
-	screen.render do
-	end
 
 	screen.render do
 		add_component(SplashScreen,
@@ -72,7 +78,6 @@ begin
 								 )
 		sleep 2
 	end
-
 
 	m = (Curses.lines - 11)/2
 	until m == 1
@@ -88,10 +93,11 @@ begin
 	end
 
 	screen.render do
-		add_component(LoginScreen)
-		sleep 100
+		add_component(Main)
+		while State.state[:running]
+			sleep 1
+		end
 	end
-  exit
 
 	uri = URI('https://www.pivotaltracker.com/services/v5/me')
 
@@ -110,9 +116,6 @@ begin
 		PivotalTracker::Client.token = token
 	end
 
-	project = PivotalTracker::Project.find(1506772)
-
-	State.send_action type: :set_project, project: project
 
 	screen.render do
 		add_component(ProjectView)

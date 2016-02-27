@@ -1,6 +1,10 @@
 require 'rubygems'
 require 'bundler/setup'
 require 'pivotal-tracker'
+require "net/http"
+require "uri"
+# stop a thread that has failing code in it
+Thread.abort_on_exception = true
 
 #this reducer state object is global so maybey its not
 #the best but it will work for now
@@ -11,15 +15,24 @@ class State
       @reducer = block
     end
 
+    def subscribe &block
+      @subscriptions ||= []
+      @subscriptions << block
+    end
+
     # IDEA: this could genarate a diff
     # stack so that you could regress a action
     def reduce state, action
       @state = @reducer[state, action]
+      log(@state)
+      Thread.new{subscriptions.each(&:call)} if subscriptions
     end
 
     def send_action action
       reduce state, action
     end
+    private
+    attr_reader :subscriptions
   end
 end
 
@@ -38,28 +51,35 @@ class Screen
   attr_accessor :window, :windows, :focused
 
   def render &block
-    listen = true
-    Thread.new do
-      while listen
+    tr = Thread.new do
+      loop do
         ch = window.getch
         focused.on_getch(ch)
       end
     end
 
     instance_eval(&block)
+
+    tr.kill
     clean_windows_for self
-    listen = false
   end
 
   def clean_windows_for renderer
-    windows[renderer].map do |win|
-      $stderr.puts "cleaning up #{win[:instance].class}"
+    (windows[renderer] || []).map do |win|
+      clean_windows_for win[:inst]
+      log "cleaning up #{win[:instance].class}"
       win[:win].clear
       win[:win].refresh
       win[:win].close
     end
     window.refresh
     windows[renderer] = []
+  end
+
+  def rerender component
+    clean_windows_for component
+    # componet.on_redraw
+    component.draw
   end
 
   def initialize(window)
@@ -77,7 +97,7 @@ class Screen
     ]
 
     @windows[renderer] ||= []
-    $stderr.puts "building #{klass} at  #{[height, width, top, left]}"
+    log "building #{klass} at  #{[height, width, top, left]}"
     win  = window.subwin(height, width, top, left)
     inst = klass.new(win, self, opts)
     inst.on_mount
@@ -87,7 +107,7 @@ class Screen
       instance: inst,
     }
 
-    $stderr.puts "rendering #{klass} at  #{[height, width, top, left]}"
+    log "rendering #{klass} at  #{[height, width, top, left]}"
     inst.draw
     win.refresh
   end
@@ -114,7 +134,7 @@ end
 
 ###
 # A pencil is a thing that can draw on a screen
-# to alcomponts my be built with admeny otions as you would like 
+# to alcomponts my be built with admeny otions as you would like
 # todo: a pencil shold define a event listner that is used when it is infocus
 class Pensil
 
@@ -128,10 +148,12 @@ class Pensil
   # the component redraws
   def state= state_changes
     new_state = state.merge state_changes
+    $stderr.puts "changigng #{self.class.name}'s state to #{new_state}"
     @state = new_state
-    redraw #unless new_state == state
+    Thread.new {redraw} #unless new_state == state
   end
 
+  #this happens whenever a pensil is loaded but before it it renderd
   def on_mount
   end
 
@@ -159,6 +181,7 @@ class Pensil
   end
 
   def lines
+    log self.inspect
     window.maxy
   end
 
@@ -168,6 +191,10 @@ class Pensil
 
   def left
     window.begx
+  end
+
+  def clear
+
   end
 
   # maybe draw is given the window
@@ -182,14 +209,34 @@ class Pensil
   private
 
   def redraw
-    window.clear
-    draw
-    window.refresh
+    screen.rerender self
   end
 
   attr_reader :screen
 end
 
+
+class Main < Pensil
+  def on_mount
+    self.state = {page: State.state[:page]}
+    State.subscribe do
+      self.state = {page: State.state[:page]}
+    end
+    $stderr.puts state
+  end
+
+  def draw
+    $stderr.puts state
+    case state[:page]
+    when :login
+      add_component(LoginScreen)
+    when :project
+      add_component(ProjectView)
+    else
+      fail('state page must be set')
+    end
+  end
+end
 
 class LoginScreen < Pensil
   def on_mount
@@ -216,7 +263,9 @@ class LoginScreen < Pensil
     when 127
       self.state = {password: state[:password][0..-2]}
     when 10
-      self.state = {input_func: :password_func}
+      token = login(state[:email], state[:password])
+      State.send_action type: :set_token, page: token
+      State.send_action type: :set_page, page: :project
     else
       self.state = {password: state[:password] += char}
     end
@@ -318,10 +367,14 @@ class Logo < Pensil
 end
 
 class ProjectView < Pensil
+  def on_mount
+    get_focus
+  end
 
   def draw
-    top_message = State.state[:project].name
+    top_message = State.state[:project]
     window.setpos(0, (cols - top_message.length) / 2)
+    $stderr.puts 'im in here'
     window.addstr top_message
     window.refresh
 
@@ -370,7 +423,7 @@ class StoryList < Pensil
 
     stories.each do |story|
       window.setpos(line_count += 1, 1)
-      $stderr.puts("drawing story(#{story.id})")
+      log("drawing story(#{story.id})")
       window.addstr("#{story.name.slice(0, cols - 17)}")
       window.setpos(line_count, cols - (story.current_state.length + 3))
       window.addstr("#{story.current_state}")
@@ -446,4 +499,43 @@ class IceboxList < Pensil
   def project
     State.state[:project]
   end
+end
+
+def log msg
+  $stderr.puts msg
+  $stderr.flush
+end
+
+def get(path, token, args = {})
+	uri = URI("https://www.pivotaltracker.com/#{path}")
+
+  response = ''
+	Net::HTTP.start(uri.host, uri.port, :use_ssl => true) do |http|
+		request = Net::HTTP::Get.new uri
+    request['X-TrackerToken'] = token
+		res = http.request request # Net::HTTPResponse object
+		response = JSON.parse(res.body)
+	end
+  response
+end
+
+def login(email, token)
+  @token ||= get_token(email, token)
+end
+
+def get_token(email, password)
+  uri = URI('https://www.pivotaltracker.com/services/v5/me')
+
+  token = ''
+  Net::HTTP.start(uri.host, uri.port, :use_ssl => true ) do |http|
+    request = Net::HTTP::Get.new uri
+
+    uname = email
+    password = password
+    request.basic_auth uname, password
+
+    response = http.request request # Net::HTTPResponse object
+    token = JSON.parse(response.body)['api_token']
+  end
+  token
 end
