@@ -1,37 +1,39 @@
 require 'rubygems'
 require 'bundler/setup'
 require 'pivotal-tracker'
-require "net/http"
-require "uri"
+require 'net/http'
+require 'uri'
 # stop a thread that has failing code in it
 Thread.abort_on_exception = true
 
-#this reducer state object is global so maybey its not
-#the best but it will work for now
+# this reducer state object is global so maybey its not
+# the best but it will work for now
 class State
   class << self
     attr_accessor :state
-    def reducer &block
+    def reducer(&block)
       @reducer = block
     end
 
-    def subscribe &block
+    def subscribe(&block)
       @subscriptions ||= []
       @subscriptions << block
     end
 
     # IDEA: this could genarate a diff
     # stack so that you could regress a action
-    def reduce state, action
+    def reduce(state, action)
       @state = @reducer[state, action]
       log(@state)
-      Thread.new{subscriptions.each(&:call)} if subscriptions
+      Thread.new { subscriptions.each(&:call) } if subscriptions
     end
 
-    def send_action action
+    def send_action(action)
       reduce state, action
     end
+
     private
+
     attr_reader :subscriptions
   end
 end
@@ -50,7 +52,7 @@ end
 class Screen
   attr_accessor :window, :windows, :focused
 
-  def render &block
+  def render(&block)
     tr = Thread.new do
       loop do
         ch = window.getch
@@ -64,7 +66,7 @@ class Screen
     clean_windows_for self
   end
 
-  def clean_windows_for renderer
+  def clean_windows_for(renderer)
     (windows[renderer] || []).map do |win|
       clean_windows_for win[:inst]
       log "cleaning up #{win[:instance].class}"
@@ -76,7 +78,7 @@ class Screen
     windows[renderer] = []
   end
 
-  def rerender component
+  def rerender(component)
     clean_windows_for component
     # componet.on_redraw
     component.draw
@@ -89,12 +91,10 @@ class Screen
   end
 
   def add_component(klass, renderer = self, **opts)
-    height, width, top, left = [
-      opts[:height] || renderer.lines,
-      opts[:width]  || renderer.cols,
-      opts[:top]    || renderer.top,
-      opts[:left]   || renderer.left
-    ]
+    height = opts[:height] || renderer.lines
+    width = opts[:width] || renderer.cols
+    top = opts[:top] || renderer.top
+    left = opts[:left] || renderer.left
 
     @windows[renderer] ||= []
     log "building #{klass} at  #{[height, width, top, left]}"
@@ -104,7 +104,7 @@ class Screen
 
     @windows[renderer] << {
       win:      win,
-      instance: inst,
+      instance: inst
     }
 
     log "rendering #{klass} at  #{[height, width, top, left]}"
@@ -137,7 +137,6 @@ end
 # to alcomponts my be built with admeny otions as you would like
 # todo: a pencil shold define a event listner that is used when it is infocus
 class Pensil
-
   attr_reader :state
 
   def on_getch
@@ -146,14 +145,14 @@ class Pensil
   ##
   # when the state of a component changes
   # the component redraws
-  def state= state_changes
+  def state=(state_changes)
     new_state = state.merge state_changes
     $stderr.puts "changigng #{self.class.name}'s state to #{new_state}"
     @state = new_state
-    Thread.new {redraw} #unless new_state == state
+    Thread.new { redraw } # unless new_state == state
   end
 
-  #this happens whenever a pensil is loaded but before it it renderd
+  # this happens whenever a pensil is loaded but before it it renderd
   def on_mount
   end
 
@@ -161,7 +160,7 @@ class Pensil
     screen.focused = self
   end
 
-  def add_component klass, **opts
+  def add_component(klass, **opts)
     screen.add_component klass, self, **opts
   end
 
@@ -181,7 +180,7 @@ class Pensil
   end
 
   def lines
-    log self.inspect
+    log inspect
     window.maxy
   end
 
@@ -194,7 +193,6 @@ class Pensil
   end
 
   def clear
-
   end
 
   # maybe draw is given the window
@@ -215,12 +213,11 @@ class Pensil
   attr_reader :screen
 end
 
-
 class Main < Pensil
   def on_mount
-    self.state = {page: State.state[:page]}
+    self.state = { page: State.state[:page] }
     State.subscribe do
-      self.state = {page: State.state[:page]}
+      self.state = { page: State.state[:page] }
     end
     $stderr.puts state
   end
@@ -233,7 +230,7 @@ class Main < Pensil
     when :project
       add_component(ProjectView)
     else
-      fail('state page must be set')
+      raise('state page must be set')
     end
   end
 end
@@ -248,31 +245,31 @@ class LoginScreen < Pensil
   end
 
   def login_input(char)
-    case char
-    when 127
-      self.state = {user_name: state[:user_name][0..-2]}
-    when 10
-      self.state = {input_func: :password_input}
-    else
-      self.state = {user_name: state[:user_name] += char}
-    end
+    self.state = case char
+                 when 127
+                   { user_name: state[:user_name][0..-2] }
+                 when 10
+                   { input_func: :password_input }
+                 else
+                   { user_name: state[:user_name] += char }
+                 end
   end
 
   def password_input(char)
     case char
     when 127
-      self.state = {password: state[:password][0..-2]}
+      self.state = { password: state[:password][0..-2] }
     when 10
       token = login(state[:email], state[:password])
       State.send_action type: :set_token, page: token
       State.send_action type: :set_page, page: :project
     else
-      self.state = {password: state[:password] += char}
+      self.state = { password: state[:password] += char }
     end
   end
 
   def get_inital_state
-    {user_name: '', password: '', input_func: :login_input}
+    { user_name: '', password: '', input_func: :login_input }
   end
 
   def draw
@@ -304,18 +301,15 @@ class LoginScreen < Pensil
 end
 
 class PasswordField < Pensil
-
   def draw
     add_component(TextField,
                   **opts,
-                  value: ?**opts[:value].length,
+                  value: ?* * opts[:value].length
                  )
   end
-
 end
 
 class TextField < Pensil
-
   def draw
     window.setpos(1, 1)
     window.addstr "#{opts[:prompt]} "
@@ -338,11 +332,9 @@ class TextField < Pensil
     window.setpos(lines, 0)
     window.addstr("└#{?─*(cols-2)}┘")
   end
-
 end
 
 class SplashScreen < Pensil
-
   def draw
     add_component(Logo,
                   height: opts[:height],
@@ -351,11 +343,9 @@ class SplashScreen < Pensil
                   left: opts[:left]
                  )
   end
-
 end
 
 class Logo < Pensil
-
   def draw
     File.foreach("#{File.expand_path(File.dirname(__FILE__))}/tracker_logo").with_index do |line, i|
       window.setpos(i, 0)
@@ -363,7 +353,6 @@ class Logo < Pensil
     end
     window.refresh
   end
-
 end
 
 class ProjectView < Pensil
@@ -391,7 +380,6 @@ class ProjectView < Pensil
 end
 
 class StoryList < Pensil
-
   def highlight
     @highlight = true
   end
@@ -424,11 +412,10 @@ class StoryList < Pensil
     stories.each do |story|
       window.setpos(line_count += 1, 1)
       log("drawing story(#{story.id})")
-      window.addstr("#{story.name.slice(0, cols - 17)}")
+      window.addstr(story.name.slice(0, cols - 17).to_s)
       window.setpos(line_count, cols - (story.current_state.length + 3))
-      window.addstr("#{story.current_state}")
+      window.addstr(story.current_state.to_s)
     end
-
 
     window.setpos(0, 0)
     window.addstr("┌#{?─*(cols-2)}┐")
@@ -446,19 +433,16 @@ class StoryList < Pensil
     end
     window.setpos(lines, 0)
     window.addstr("└#{?─*(cols-2)}┘")
-
   end
-
 end
 
 class CurrentList < Pensil
-
   def draw
     add_component(StoryList, stories: get_stories, title:  'Current')
   end
 
   def get_stories
-    $stderr.puts("get stories current")
+    $stderr.puts('get stories current')
     project.iteration(:current).stories
     PivotalTracker::Iteration.current(project).stories
   end
@@ -469,15 +453,13 @@ class CurrentList < Pensil
 end
 
 class BacklogList < Pensil
-
-
   def draw
     add_component(StoryList, stories: get_stories, title:  'Backlog')
   end
 
   def get_stories
-    $stderr.puts("get stories back")
-    PivotalTracker::Iteration.backlog(project).map{|i| i.stories}.flatten
+    $stderr.puts('get stories back')
+    PivotalTracker::Iteration.backlog(project).map(&:stories).flatten
   end
 
   def project
@@ -486,14 +468,16 @@ class BacklogList < Pensil
 end
 
 class IceboxList < Pensil
-
   def draw
     add_component(StoryList, stories: get_stories, title:  'Icebox')
   end
 
   def get_stories
-    $stderr.puts("get stories ice")
-    @stories = project.stories.all.select{|story| %w(unscheduled).include? story.current_state}
+    $stderr.puts('get stories ice')
+    @stories = project
+               .stories
+               .all
+               .select { |story| %w(unscheduled).include? story.current_state }
   end
 
   def project
