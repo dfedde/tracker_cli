@@ -1,6 +1,6 @@
 require 'rubygems'
 require 'bundler/setup'
-require 'pivotal-tracker'
+require 'httparty'
 require 'net/http'
 require 'uri'
 # stop a thread that has failing code in it
@@ -53,17 +53,20 @@ class Screen
   attr_accessor :window, :windows, :focused
 
   def render(&block)
-    tr = Thread.new do
-      loop do
-        ch = window.getch
-        focused.on_getch(ch)
-      end
-    end
+    raise 'you can only render once per screen' if @exists
+    @exists = true
+    start_key_stream
+    @render_thread = Thread.new do
+      instance_eval(&block)
+      Thread.stop
+    end.join
+  end
 
-    instance_eval(&block)
-
-    tr.kill
+  def finish
+    @input_thread.kill
     clean_windows_for self
+    @render_thread.run
+    @exists = false
   end
 
   def clean_windows_for(renderer)
@@ -130,6 +133,17 @@ class Screen
 
   def on_getch
   end
+
+  private
+
+  def start_key_stream
+    @input_thread = Thread.new do
+      loop do
+        ch = window.getch
+        focused.on_getch(ch)
+      end
+    end
+  end
 end
 
 ###
@@ -147,7 +161,6 @@ class Pensil
   # the component redraws
   def state=(state_changes)
     new_state = state.merge state_changes
-    $stderr.puts "changigng #{self.class.name}'s state to #{new_state}"
     @state = new_state
     Thread.new { redraw } # unless new_state == state
   end
@@ -180,7 +193,6 @@ class Pensil
   end
 
   def lines
-    log inspect
     window.maxy
   end
 
@@ -213,6 +225,47 @@ class Pensil
   attr_reader :screen
 end
 
+class Tracker
+  include HTTParty
+  base_uri 'https://www.pivotaltracker.com/services/v5'
+
+  def self.get(path, token, args = {})
+    uri = URI("https://www.pivotaltracker.com/#{path}")
+
+    response = ''
+    Net::HTTP.start(uri.host, uri.port, use_ssl: true) do |http|
+      request = Net::HTTP::Get.new uri
+      request['X-TrackerToken'] = token
+      res = http.request request # Net::HTTPResponse object
+      response = JSON.parse(res.body)
+    end
+    response
+  end
+
+  def self.login(email, token)
+    @token ||= get_token(email, token)
+  end
+
+  def self.get_token(email, password)
+    uri = URI('https://www.pivotaltracker.com/services/v5/me')
+
+    token = ''
+    Net::HTTP.start(uri.host, uri.port, use_ssl: true) do |http|
+      request = Net::HTTP::Get.new uri
+
+      uname = email
+      password = password
+      log "uname:#{uname} password: #{password}"
+      request.basic_auth uname, password
+
+      response = http.request request # Net::HTTPResponse object
+      log response.body
+      token = JSON.parse(response.body)['api_token']
+    end
+    token
+  end
+end
+
 class Main < Pensil
   def on_mount
     self.state = { page: State.state[:page] }
@@ -223,7 +276,6 @@ class Main < Pensil
   end
 
   def draw
-    $stderr.puts state
     case state[:page]
     when :login
       add_component(LoginScreen)
@@ -260,11 +312,19 @@ class LoginScreen < Pensil
     when 127
       self.state = { password: state[:password][0..-2] }
     when 10
-      token = login(state[:email], state[:password])
+      login
+    else
+      self.state = { password: state[:password] += char }
+    end
+  end
+
+  def login
+    token = Tracker.login(state[:user_name], state[:password])
+    if token
       State.send_action type: :set_token, page: token
       State.send_action type: :set_page, page: :project
     else
-      self.state = { password: state[:password] += char }
+      self.state = { input_func: :login_input }
     end
   end
 
@@ -347,7 +407,8 @@ end
 
 class Logo < Pensil
   def draw
-    File.foreach("#{File.expand_path(File.dirname(__FILE__))}/tracker_logo").with_index do |line, i|
+    lines = File.expand_path(File.dirname(__FILE__))
+    File.foreach("#{lines}/tracker_logo").with_index do |line, i|
       window.setpos(i, 0)
       window.addstr line
     end
@@ -363,18 +424,17 @@ class ProjectView < Pensil
   def draw
     top_message = State.state[:project]
     window.setpos(0, (cols - top_message.length) / 2)
-    $stderr.puts 'im in here'
     window.addstr top_message
-    window.refresh
 
     width = (cols / 3)
-    [CurrentList, BacklogList, IceboxList].map.with_index do |klass, i|
+#, BacklogList, IceboxList
+    [CurrentList].map.with_index do |klass, i|
       add_component klass,
-        project: State.state[:project],
-        height: lines-1,
-        width: width,
-        top: 1,
-        left: i * width
+                    project: State.state[:project],
+                    height: lines - 1,
+                    width: width,
+                    top: 1,
+                    left: i * width
     end
   end
 end
@@ -438,13 +498,10 @@ end
 
 class CurrentList < Pensil
   def draw
-    add_component(StoryList, stories: get_stories, title:  'Current')
+    add_component(StoryList, stories: stories, title:  'Current')
   end
 
-  def get_stories
-    $stderr.puts('get stories current')
-    project.iteration(:current).stories
-    PivotalTracker::Iteration.current(project).stories
+  def stories
   end
 
   def project
@@ -490,36 +547,3 @@ def log msg
   $stderr.flush
 end
 
-def get(path, token, args = {})
-	uri = URI("https://www.pivotaltracker.com/#{path}")
-
-  response = ''
-	Net::HTTP.start(uri.host, uri.port, :use_ssl => true) do |http|
-		request = Net::HTTP::Get.new uri
-    request['X-TrackerToken'] = token
-		res = http.request request # Net::HTTPResponse object
-		response = JSON.parse(res.body)
-	end
-  response
-end
-
-def login(email, token)
-  @token ||= get_token(email, token)
-end
-
-def get_token(email, password)
-  uri = URI('https://www.pivotaltracker.com/services/v5/me')
-
-  token = ''
-  Net::HTTP.start(uri.host, uri.port, :use_ssl => true ) do |http|
-    request = Net::HTTP::Get.new uri
-
-    uname = email
-    password = password
-    request.basic_auth uname, password
-
-    response = http.request request # Net::HTTPResponse object
-    token = JSON.parse(response.body)['api_token']
-  end
-  token
-end

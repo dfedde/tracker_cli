@@ -1,8 +1,8 @@
 # A sample Gemfile
-source "https://rubygems.org"
+source 'https://rubygems.org'
 
-gem 'pivotal-tracker'
 gem 'curses'
+gem 'httparty'
 
 group :test do
   gem 'rspec'
