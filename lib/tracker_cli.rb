@@ -15,17 +15,27 @@ class State
       @reducer = block
     end
 
-    def subscribe(&block)
-      @subscriptions ||= []
-      @subscriptions << block
+    def subscribe(key, &block)
+      @subscriptions ||= {}
+      @subscriptions[key] = { block: block }
+    end
+
+    def unsubscribe(key)
+      @subscriptions ||= {}
+      @subscriptions[:thread]&.stop
+      @subscriptions.delete key
     end
 
     # IDEA: this could genarate a diff
     # stack so that you could regress a action
     def reduce(state, action)
+      log("\n old state: #{state} \n action: #{action}")
       @state = @reducer[state, action]
-      log(@state)
-      Thread.new { subscriptions.each(&:call) } if subscriptions
+      log("\n new_state: #{@state}")
+
+      subscriptions.each do |key, value|
+        subscriptions[key][:thread] = Thread.new {value[:block][]}
+      end if subscriptions
     end
 
     def send_action(action)
@@ -70,18 +80,23 @@ class Screen
   end
 
   def clean_windows_for(renderer)
+    log(@windows.map{|key, value| [ key.class, value.map{|pensil| pensil[:instance].class} ] }.inspect)
     (windows[renderer] || []).map do |win|
       clean_windows_for win[:inst]
-      log "cleaning up #{win[:instance].class}"
+      log "cleaning up #{win[:instance]}"
       win[:win].clear
       win[:win].refresh
       win[:win].close
+      State.unsubscribe(win[:inst])
+      @windows.delete win
+      log "cleaned up #{win[:instance]}"
     end
     window.refresh
-    windows[renderer] = []
+    windows.delete renderer
   end
 
   def rerender(component)
+    log "rerender #{component.class}"
     clean_windows_for component
     # componet.on_redraw
     component.draw
@@ -100,17 +115,22 @@ class Screen
     left = opts[:left] || renderer.left
 
     @windows[renderer] ||= []
+    log "adding to #{renderer}"
+    log(@windows.map{|key, value| [ key.class, value.map{|pensil| pensil[:instance].class} ] }.inspect)
     log "building #{klass} at  #{[height, width, top, left]}"
     win  = window.subwin(height, width, top, left)
     inst = klass.new(win, self, opts)
+    log "built #{inst}"
     inst.on_mount
+    State.subscribe(inst) do
+      inst.subscribe
+    end
 
     @windows[renderer] << {
       win:      win,
       instance: inst
     }
 
-    log "rendering #{klass} at  #{[height, width, top, left]}"
     inst.draw
     win.refresh
   end
@@ -149,7 +169,7 @@ end
 ###
 # A pencil is a thing that can draw on a screen
 # to alcomponts my be built with admeny otions as you would like
-# todo: a pencil shold define a event listner that is used when it is infocus
+# todo: a pencil should define a event listner that is used when it is infocus
 class Pensil
   attr_reader :state
 
@@ -193,6 +213,7 @@ class Pensil
   end
 
   def lines
+    log self
     window.maxy
   end
 
@@ -269,10 +290,13 @@ end
 class Main < Pensil
   def on_mount
     self.state = { page: State.state[:page] }
-    State.subscribe do
-      self.state = { page: State.state[:page] }
-    end
     $stderr.puts state
+  end
+
+  def subscribe
+    log 'ran'
+    self.state = { page: State.state[:page] }
+    log 'finished running ran'
   end
 
   def draw
@@ -502,6 +526,7 @@ class CurrentList < Pensil
   end
 
   def stories
+    []
   end
 
   def project
